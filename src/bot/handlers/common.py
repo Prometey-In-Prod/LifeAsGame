@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from src.bot.filters import OwnerFilter
-from src.bot.keyboards import BTN_FINANCE, BTN_WORKOUT, main_menu
+from src.bot.keyboards import BTN_WORKOUT, main_menu
 
 router = Router()
 router.message.filter(OwnerFilter())
@@ -28,11 +28,6 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer("Отменено.", reply_markup=main_menu())
-
-
-@router.message(F.text == BTN_FINANCE)
-async def finance_stub(message: Message) -> None:
-    await message.answer("Финансы появятся на этапе 2 🙂")
 
 
 @router.message(F.text == BTN_WORKOUT)

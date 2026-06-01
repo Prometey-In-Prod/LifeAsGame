@@ -1,6 +1,13 @@
 from aiogram.fsm.state import State, StatesGroup
 
 
+class FinanceEntry(StatesGroup):
+    kind = State()
+    category = State()
+    amount = State()
+    note = State()
+
+
 class DailyCheckin(StatesGroup):
     bedtime = State()
     wakeup = State()

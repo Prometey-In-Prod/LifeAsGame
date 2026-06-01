@@ -8,11 +8,18 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.db.models import Vitamin
+from src.db.models import Category, Vitamin
 
 BTN_DAY = "📋 Заполнить день"
 BTN_FINANCE = "💰 Финансы"
 BTN_WORKOUT = "🏋️ Тренировка"
+
+KIND_LABELS = {
+    "income": "💰 Доход",
+    "expense": "💸 Расход",
+    "saving": "🐷 Сбережение",
+    "debt": "💳 Долг/кредит",
+}
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -48,6 +55,22 @@ def skip_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="Пропустить", callback_data="skip")]]
     )
+
+
+def finance_kind_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for kind, label in KIND_LABELS.items():
+        builder.button(text=label, callback_data=f"fin_kind:{kind}")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def finance_categories_kb(categories: list[Category]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for c in categories:
+        builder.button(text=c.name, callback_data=f"fin_cat:{c.id}")
+    builder.adjust(2)
+    return builder.as_markup()
 
 
 def vitamins_kb(vitamins: list[Vitamin], selected: set[int]) -> InlineKeyboardMarkup:

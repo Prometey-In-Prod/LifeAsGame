@@ -4,19 +4,47 @@ import re
 from datetime import date, time
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from src.bot.filters import OwnerFilter
-from src.bot.keyboards import BTN_DAY, main_menu, scale_1_10, skip_kb, vitamins_kb, yes_no
+from src.bot.keyboards import (
+    BTN_DAY,
+    day_nav_kb,
+    main_menu,
+    scale_1_10,
+    vitamins_kb,
+    yes_no,
+)
 from src.bot.states import DailyCheckin
 from src.db.database import SessionLocal
-from src.db.repo import compute_sleep_hours, get_active_vitamins, upsert_daily_log
+from src.db.repo import get_active_vitamins, get_daily_log, upsert_daily_log
 
 router = Router()
 router.message.filter(OwnerFilter())
 router.callback_query.filter(OwnerFilter())
+
+# Порядок шагов чек-ина
+ORDER = [
+    DailyCheckin.bedtime,
+    DailyCheckin.wakeup,
+    DailyCheckin.trained,
+    DailyCheckin.work_hours,
+    DailyCheckin.vitamins,
+    DailyCheckin.mood,
+    DailyCheckin.energy,
+    DailyCheckin.day_rating,
+    DailyCheckin.weight,
+    DailyCheckin.note,
+]
+ORDER_NAMES = [s.state for s in ORDER]
+
+SCALE_FIELD = {
+    DailyCheckin.mood.state: "mood",
+    DailyCheckin.energy.state: "energy",
+    DailyCheckin.day_rating.state: "day_rating",
+}
 
 
 def parse_time(text: str) -> time | None:
@@ -39,62 +67,170 @@ def parse_float(text: str) -> float | None:
     return value if value >= 0 else None
 
 
+def _save_field(**fields) -> None:
+    with SessionLocal() as session:
+        upsert_daily_log(session, date.today(), **fields)
+
+
+async def send_step(message: Message, state: FSMContext, step) -> None:
+    """Задать вопрос для шага step (step — State из DailyCheckin)."""
+    await state.set_state(step)
+
+    if step == DailyCheckin.bedtime:
+        await message.answer(
+            "🛌 Во сколько лёг спать? (например, 23:30)", reply_markup=day_nav_kb()
+        )
+    elif step == DailyCheckin.wakeup:
+        await message.answer(
+            "☀️ Во сколько проснулся? (например, 7:15)", reply_markup=day_nav_kb()
+        )
+    elif step == DailyCheckin.trained:
+        await message.answer("🏋️ Была тренировка сегодня?", reply_markup=yes_no())
+    elif step == DailyCheckin.work_hours:
+        await message.answer(
+            "💼 Сколько часов интенсивно работал? (например, 4.5)",
+            reply_markup=day_nav_kb(),
+        )
+    elif step == DailyCheckin.vitamins:
+        with SessionLocal() as session:
+            vitamins = get_active_vitamins(session)
+            log = get_daily_log(session, date.today())
+            selected = {v.id for v in log.vitamins} if log else set()
+        await state.update_data(vitamin_ids=list(selected))
+        await message.answer(
+            "💊 Какие витамины принял? Отмечай и жми «Готово».",
+            reply_markup=vitamins_kb(vitamins, selected),
+        )
+    elif step == DailyCheckin.mood:
+        await message.answer("🙂 Настроение (1–10)?", reply_markup=scale_1_10())
+    elif step == DailyCheckin.energy:
+        await message.answer("⚡ Энергия (1–10)?", reply_markup=scale_1_10())
+    elif step == DailyCheckin.day_rating:
+        await message.answer("⭐ Оценка дня (1–10)?", reply_markup=scale_1_10())
+    elif step == DailyCheckin.weight:
+        await message.answer("⚖️ Вес сегодня (кг)?", reply_markup=day_nav_kb())
+    elif step == DailyCheckin.note:
+        await message.answer("📝 Заметка о дне?", reply_markup=day_nav_kb())
+
+
+async def advance(message: Message, state: FSMContext) -> None:
+    """Перейти к следующему шагу или завершить, если шаги кончились."""
+    current = await state.get_state()
+    idx = ORDER_NAMES.index(current) if current in ORDER_NAMES else -1
+    if idx == -1 or idx + 1 >= len(ORDER):
+        await finish(message, state)
+    else:
+        await send_step(message, state, ORDER[idx + 1])
+
+
+async def finish(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    with SessionLocal() as session:
+        log = get_daily_log(session, date.today())
+        vit_count = len(log.vitamins) if log else 0
+
+    if log is None:
+        await message.answer("Ничего не сохранил за сегодня.", reply_markup=main_menu())
+        return
+
+    lines = ["✅ День сохранён!"]
+    if log.sleep_hours is not None:
+        lines.append(f"Сон: {log.sleep_hours} ч")
+    elif log.bedtime or log.wakeup:
+        lines.append(
+            f"Сон: лёг {log.bedtime or '—'}, встал {log.wakeup or '—'} (неполно)"
+        )
+    lines.append(f"Тренировка: {'да' if log.trained else 'нет'}")
+    if log.work_hours is not None:
+        lines.append(f"Работа: {log.work_hours} ч")
+    if vit_count:
+        lines.append(f"Витамины: {vit_count}")
+    rating_parts = [
+        ("Настроение", log.mood),
+        ("Энергия", log.energy),
+        ("Оценка дня", log.day_rating),
+    ]
+    rating_str = ", ".join(f"{name} {val}" for name, val in rating_parts if val is not None)
+    if rating_str:
+        lines.append(rating_str)
+    if log.weight_kg is not None:
+        lines.append(f"Вес: {log.weight_kg} кг")
+
+    lines.append("\nМожешь зайти снова в течение дня — допишешь остальное.")
+    await message.answer("\n".join(lines), reply_markup=main_menu())
+
+
+# --- Запуск чек-ина -------------------------------------------------------
+
 @router.message(F.text == BTN_DAY)
 @router.message(Command("day"))
 async def start_checkin(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await state.set_state(DailyCheckin.bedtime)
     await message.answer(
-        "📋 Чек-ин дня.\n\nВо сколько ты лёг спать? (например, 23:30)"
+        "📋 Чек-ин дня. На любом шаге: «⏭ Пропустить» или «✅ Завершить» — "
+        "ответы сохраняются сразу, можно вернуться позже."
     )
+    await send_step(message, state, DailyCheckin.bedtime)
 
 
 @router.callback_query(F.data == "start_day")
 async def start_checkin_cb(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await state.set_state(DailyCheckin.bedtime)
     await callback.message.answer(
-        "📋 Чек-ин дня.\n\nВо сколько ты лёг спать? (например, 23:30)"
+        "📋 Чек-ин дня. На любом шаге: «⏭ Пропустить» или «✅ Завершить»."
     )
+    await send_step(callback.message, state, DailyCheckin.bedtime)
     await callback.answer()
 
+
+# --- Навигация ------------------------------------------------------------
+
+@router.callback_query(StateFilter(*ORDER), F.data == "day_skip")
+async def on_skip(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await advance(callback.message, state)
+    await callback.answer("Пропущено")
+
+
+@router.callback_query(StateFilter(*ORDER), F.data == "day_finish")
+async def on_finish(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await finish(callback.message, state)
+    await callback.answer()
+
+
+# --- Шаги -----------------------------------------------------------------
 
 @router.message(DailyCheckin.bedtime)
 async def set_bedtime(message: Message, state: FSMContext) -> None:
     parsed = parse_time(message.text or "")
     if parsed is None:
-        await message.answer("Не понял время. Введи в формате ЧЧ:ММ, например 23:30.")
+        await message.answer("Не понял время. Формат ЧЧ:ММ, например 23:30.")
         return
-    await state.update_data(bedtime=parsed.isoformat())
-    await state.set_state(DailyCheckin.wakeup)
-    await message.answer("Во сколько ты проснулся? (например, 7:15)")
+    _save_field(bedtime=parsed)
+    await advance(message, state)
 
 
 @router.message(DailyCheckin.wakeup)
 async def set_wakeup(message: Message, state: FSMContext) -> None:
     parsed = parse_time(message.text or "")
     if parsed is None:
-        await message.answer("Не понял время. Введи в формате ЧЧ:ММ, например 7:15.")
+        await message.answer("Не понял время. Формат ЧЧ:ММ, например 7:15.")
         return
-    data = await state.get_data()
-    bedtime = time.fromisoformat(data["bedtime"])
-    sleep_hours = compute_sleep_hours(bedtime, parsed)
-    await state.update_data(wakeup=parsed.isoformat())
-    await state.set_state(DailyCheckin.trained)
-    await message.answer(
-        f"Сон: {sleep_hours} ч 😴\n\nБыла тренировка сегодня?", reply_markup=yes_no()
-    )
+    _save_field(wakeup=parsed)
+    with SessionLocal() as session:
+        log = get_daily_log(session, date.today())
+        if log and log.sleep_hours is not None:
+            await message.answer(f"Сон: {log.sleep_hours} ч 😴")
+    await advance(message, state)
 
 
 @router.callback_query(DailyCheckin.trained, F.data.startswith("yn:"))
 async def set_trained(callback: CallbackQuery, state: FSMContext) -> None:
     trained = callback.data == "yn:yes"
-    await state.update_data(trained=trained)
-    await state.set_state(DailyCheckin.work_hours)
-    await callback.message.edit_text(
-        f"Тренировка: {'да 💪' if trained else 'нет'}"
-    )
-    await callback.message.answer("Сколько часов интенсивно работал? (например, 4.5)")
+    _save_field(trained=trained)
+    await callback.message.edit_text(f"Тренировка: {'да 💪' if trained else 'нет'}")
+    await advance(callback.message, state)
     await callback.answer()
 
 
@@ -104,14 +240,8 @@ async def set_work_hours(message: Message, state: FSMContext) -> None:
     if value is None:
         await message.answer("Введи число часов, например 4.5.")
         return
-    await state.update_data(work_hours=value, vitamin_ids=[])
-    await state.set_state(DailyCheckin.vitamins)
-    with SessionLocal() as session:
-        vitamins = get_active_vitamins(session)
-    await message.answer(
-        "Какие витамины принял? Отмечай и жми «Готово».",
-        reply_markup=vitamins_kb(vitamins, set()),
-    )
+    _save_field(work_hours=value)
+    await advance(message, state)
 
 
 @router.callback_query(DailyCheckin.vitamins, F.data.startswith("vit:"))
@@ -123,46 +253,26 @@ async def toggle_vitamin(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(vitamin_ids=list(selected))
     with SessionLocal() as session:
         vitamins = get_active_vitamins(session)
-    await callback.message.edit_reply_markup(
-        reply_markup=vitamins_kb(vitamins, selected)
-    )
+    await callback.message.edit_reply_markup(reply_markup=vitamins_kb(vitamins, selected))
     await callback.answer()
 
 
 @router.callback_query(DailyCheckin.vitamins, F.data == "vit_done")
 async def vitamins_done(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(DailyCheckin.mood)
+    data = await state.get_data()
+    _save_field(vitamin_ids=data.get("vitamin_ids", []))
     await callback.message.edit_text("Витамины записал.")
-    await callback.message.answer("Настроение (1–10)?", reply_markup=scale_1_10())
+    await advance(callback.message, state)
     await callback.answer()
 
 
-@router.callback_query(DailyCheckin.mood, F.data.startswith("scale:"))
-async def set_mood(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(mood=int(callback.data.split(":")[1]))
-    await state.set_state(DailyCheckin.energy)
-    await callback.message.edit_text(f"Настроение: {callback.data.split(':')[1]}/10")
-    await callback.message.answer("Энергия (1–10)?", reply_markup=scale_1_10())
-    await callback.answer()
-
-
-@router.callback_query(DailyCheckin.energy, F.data.startswith("scale:"))
-async def set_energy(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(energy=int(callback.data.split(":")[1]))
-    await state.set_state(DailyCheckin.day_rating)
-    await callback.message.edit_text(f"Энергия: {callback.data.split(':')[1]}/10")
-    await callback.message.answer("Оценка дня (1–10)?", reply_markup=scale_1_10())
-    await callback.answer()
-
-
-@router.callback_query(DailyCheckin.day_rating, F.data.startswith("scale:"))
-async def set_day_rating(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.update_data(day_rating=int(callback.data.split(":")[1]))
-    await state.set_state(DailyCheckin.weight)
-    await callback.message.edit_text(f"Оценка дня: {callback.data.split(':')[1]}/10")
-    await callback.message.answer(
-        "Вес сегодня (кг)? Можно пропустить.", reply_markup=skip_kb()
-    )
+@router.callback_query(StateFilter(*SCALE_FIELD.keys()), F.data.startswith("scale:"))
+async def set_scale(callback: CallbackQuery, state: FSMContext) -> None:
+    field = SCALE_FIELD[await state.get_state()]
+    value = int(callback.data.split(":")[1])
+    _save_field(**{field: value})
+    await callback.message.edit_text(f"{value}/10")
+    await advance(callback.message, state)
     await callback.answer()
 
 
@@ -170,69 +280,15 @@ async def set_day_rating(callback: CallbackQuery, state: FSMContext) -> None:
 async def set_weight(message: Message, state: FSMContext) -> None:
     value = parse_float(message.text or "")
     if value is None:
-        await message.answer("Введи вес числом, например 78.5, или нажми «Пропустить».")
+        await message.answer("Введи вес числом, например 78.5, или «⏭ Пропустить».")
         return
-    await state.update_data(weight_kg=value)
-    await _ask_note(message, state)
-
-
-@router.callback_query(DailyCheckin.weight, F.data == "skip")
-async def skip_weight(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.message.edit_text("Вес пропущен.")
-    await _ask_note(callback.message, state)
-    await callback.answer()
-
-
-async def _ask_note(message: Message, state: FSMContext) -> None:
-    await state.set_state(DailyCheckin.note)
-    await message.answer(
-        "Заметка о дне? Можно пропустить.", reply_markup=skip_kb()
-    )
+    _save_field(weight_kg=value)
+    await advance(message, state)
 
 
 @router.message(DailyCheckin.note)
 async def set_note(message: Message, state: FSMContext) -> None:
-    await state.update_data(note=(message.text or "").strip())
-    await _finish(message, state)
-
-
-@router.callback_query(DailyCheckin.note, F.data == "skip")
-async def skip_note(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.message.edit_text("Заметка пропущена.")
-    await _finish(callback.message, state)
-    await callback.answer()
-
-
-async def _finish(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    await state.clear()
-
-    with SessionLocal() as session:
-        log = upsert_daily_log(
-            session,
-            log_date=date.today(),
-            bedtime=time.fromisoformat(data["bedtime"]),
-            wakeup=time.fromisoformat(data["wakeup"]),
-            trained=data["trained"],
-            work_hours=data["work_hours"],
-            vitamin_ids=data.get("vitamin_ids", []),
-            mood=data["mood"],
-            energy=data["energy"],
-            day_rating=data["day_rating"],
-            weight_kg=data.get("weight_kg"),
-            note=data.get("note") or None,
-        )
-        sleep_hours = log.sleep_hours
-        vit_count = len(data.get("vitamin_ids", []))
-
-    summary = (
-        "✅ День записан!\n"
-        f"Сон: {sleep_hours} ч\n"
-        f"Тренировка: {'да' if data['trained'] else 'нет'}\n"
-        f"Работа: {data['work_hours']} ч\n"
-        f"Витамины: {vit_count}\n"
-        f"Настроение/энергия/день: {data['mood']}/{data['energy']}/{data['day_rating']}"
-    )
-    if data.get("weight_kg"):
-        summary += f"\nВес: {data['weight_kg']} кг"
-    await message.answer(summary, reply_markup=main_menu())
+    text = (message.text or "").strip()
+    if text:
+        _save_field(note=text)
+    await finish(message, state)

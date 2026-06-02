@@ -42,14 +42,17 @@ def get_categories(session: Session, kind: str) -> list[Category]:
     )
 
 
-def upsert_daily_log(session: Session, log_date: date, **fields) -> DailyLog:
-    """Создать или обновить запись дня. fields может содержать vitamin_ids: list[int]."""
-    vitamin_ids = fields.pop("vitamin_ids", None)
+def get_daily_log(session: Session, log_date: date) -> DailyLog | None:
+    return session.scalar(select(DailyLog).where(DailyLog.log_date == log_date))
 
-    bedtime = fields.get("bedtime")
-    wakeup = fields.get("wakeup")
-    if bedtime and wakeup:
-        fields["sleep_hours"] = compute_sleep_hours(bedtime, wakeup)
+
+def upsert_daily_log(session: Session, log_date: date, **fields) -> DailyLog:
+    """Создать или частично обновить запись дня (только переданные поля).
+
+    fields может содержать vitamin_ids: list[int]. Сон пересчитывается, если в записи
+    (с учётом ранее сохранённых значений) есть и время отхода ко сну, и время подъёма.
+    """
+    vitamin_ids = fields.pop("vitamin_ids", None)
 
     log = session.scalar(select(DailyLog).where(DailyLog.log_date == log_date))
     if log is None:
@@ -58,6 +61,9 @@ def upsert_daily_log(session: Session, log_date: date, **fields) -> DailyLog:
 
     for key, value in fields.items():
         setattr(log, key, value)
+
+    if log.bedtime and log.wakeup:
+        log.sleep_hours = compute_sleep_hours(log.bedtime, log.wakeup)
 
     if vitamin_ids is not None:
         log.vitamins = list(

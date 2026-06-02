@@ -32,22 +32,33 @@ def main_menu() -> ReplyKeyboardMarkup:
     )
 
 
+def _add_nav(builder: InlineKeyboardBuilder) -> None:
+    builder.button(text="⏭ Пропустить", callback_data="day_skip")
+    builder.button(text="✅ Завершить", callback_data="day_finish")
+
+
+def day_nav_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    _add_nav(builder)
+    builder.adjust(2)
+    return builder.as_markup()
+
+
 def yes_no() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Да", callback_data="yn:yes"),
-                InlineKeyboardButton(text="Нет", callback_data="yn:no"),
-            ]
-        ]
-    )
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Да", callback_data="yn:yes")
+    builder.button(text="Нет", callback_data="yn:no")
+    _add_nav(builder)
+    builder.adjust(2, 2)
+    return builder.as_markup()
 
 
 def scale_1_10() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for n in range(1, 11):
         builder.button(text=str(n), callback_data=f"scale:{n}")
-    builder.adjust(5, 5)
+    _add_nav(builder)
+    builder.adjust(5, 5, 2)
     return builder.as_markup()
 
 
@@ -79,5 +90,7 @@ def vitamins_kb(vitamins: list[Vitamin], selected: set[int]) -> InlineKeyboardMa
         mark = "✅ " if v.id in selected else "▫️ "
         builder.button(text=f"{mark}{v.name}", callback_data=f"vit:{v.id}")
     builder.button(text="Готово ✓", callback_data="vit_done")
+    builder.button(text="⏭ Пропустить", callback_data="day_skip")
+    builder.button(text="✅ Завершить", callback_data="day_finish")
     builder.adjust(2)
     return builder.as_markup()

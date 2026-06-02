@@ -1,10 +1,10 @@
-from aiogram import F, Router
+from aiogram import Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from src.bot.filters import OwnerFilter
-from src.bot.keyboards import BTN_WORKOUT, main_menu
+from src.bot.keyboards import main_menu
 
 router = Router()
 router.message.filter(OwnerFilter())
@@ -28,8 +28,3 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer("Отменено.", reply_markup=main_menu())
-
-
-@router.message(F.text == BTN_WORKOUT)
-async def workout_stub(message: Message) -> None:
-    await message.answer("Тренировки появятся на этапе 3 🙂")

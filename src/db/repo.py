@@ -121,10 +121,27 @@ def add_workout_set(
     return s
 
 
+def get_workout_sets(session: Session, session_id: int) -> list[WorkoutSet]:
+    return list(
+        session.scalars(
+            select(WorkoutSet)
+            .where(WorkoutSet.session_id == session_id)
+            .order_by(WorkoutSet.id)
+        )
+    )
+
+
 def finish_workout(session: Session, session_id: int, note: str | None = None) -> None:
     ws = session.get(WorkoutSession, session_id)
     if ws is not None:
         ws.ended_at = datetime.now()
         if note:
             ws.note = note
+        session.commit()
+
+
+def delete_workout_session(session: Session, session_id: int) -> None:
+    ws = session.get(WorkoutSession, session_id)
+    if ws is not None:
+        session.delete(ws)
         session.commit()

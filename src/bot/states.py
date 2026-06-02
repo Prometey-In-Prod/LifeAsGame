@@ -8,6 +8,11 @@ class FinanceEntry(StatesGroup):
     note = State()
 
 
+class WorkoutFlow(StatesGroup):
+    exercise = State()
+    set_input = State()
+
+
 class DailyCheckin(StatesGroup):
     bedtime = State()
     wakeup = State()

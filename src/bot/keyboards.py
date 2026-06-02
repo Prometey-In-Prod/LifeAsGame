@@ -84,6 +84,22 @@ def finance_categories_kb(categories: list[Category]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def workout_after_set_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Ещё подход", callback_data="wo:more")
+    builder.button(text="🔄 Другое упражнение", callback_data="wo:next")
+    builder.button(text="🏁 Завершить", callback_data="wo:finish")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def workout_start_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🏁 Завершить", callback_data="wo:finish")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def vitamins_kb(vitamins: list[Vitamin], selected: set[int]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for v in vitamins:

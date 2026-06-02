@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from src.analysis import metrics
 from src.analysis.metrics import monthly_finance_summary
 from src.db.database import SessionLocal
 
@@ -50,3 +51,31 @@ def build_monthly_finance_report(year: int, month: int) -> str:
 def build_current_month_report() -> str:
     today = date.today()
     return build_monthly_finance_report(today.year, today.month)
+
+
+def build_weekly_report() -> str:
+    daily_df = metrics.load_daily_df()
+    txn_df = metrics.load_transactions_df()
+    s = metrics.weekly_summary(daily_df, txn_df)
+    streaks = metrics.compute_streaks(daily_df)
+
+    def fmt(value, suffix=""):
+        return f"{value}{suffix}" if value is not None else "—"
+
+    lines = [
+        f"📅 Итоги недели ({s['from'].strftime('%d.%m')}–{s['to'].strftime('%d.%m')})",
+        "",
+        f"Заполнено дней: {s['days_logged']}/7",
+        f"😴 Средний сон: {fmt(s['avg_sleep'], ' ч')}",
+        f"💪 Тренировок: {s['workouts']}",
+        f"💼 Часов работы: {s['work_hours']}",
+        f"🙂 Среднее настроение: {fmt(s['avg_mood'])}",
+        f"⭐ Средняя оценка дня: {fmt(s['avg_rating'])}",
+        f"💸 Расходы за неделю: {_fmt(s['expense'])} ₽",
+        "",
+        f"🔥 Стрик чек-ина: {streaks['checkin']} дн. · 💪 тренировок: {streaks['training']} дн.",
+    ]
+    badge = metrics.milestone_label(streaks["checkin"])
+    if badge:
+        lines.append(f"🏆 Веха чек-ина: {badge}")
+    return "\n".join(lines)

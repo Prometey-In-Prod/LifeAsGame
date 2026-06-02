@@ -16,7 +16,7 @@ from src.bot.keyboards import (
     main_menu,
     skip_kb,
 )
-from src.bot.reports import build_current_month_report
+from src.bot.reports import build_current_month_report, build_weekly_report
 from src.bot.states import FinanceEntry
 from src.db.database import SessionLocal
 from src.db.repo import add_transaction, get_categories
@@ -46,6 +46,12 @@ async def start_finance(message: Message, state: FSMContext) -> None:
 async def cmd_report(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(build_current_month_report())
+
+
+@router.message(Command("week"))
+async def cmd_week(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(build_weekly_report())
 
 
 @router.callback_query(FinanceEntry.kind, F.data.startswith("fin_kind:"))

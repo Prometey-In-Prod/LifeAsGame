@@ -8,7 +8,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from src.bot.reports import build_monthly_finance_report
+from src.bot.reports import build_monthly_finance_report, build_weekly_report
 from src.config import OWNER_CHAT_ID, TZ
 
 
@@ -31,6 +31,10 @@ async def send_monthly_report(bot: Bot) -> None:
     await bot.send_message(OWNER_CHAT_ID, build_monthly_finance_report(year, month))
 
 
+async def send_weekly_report(bot: Bot) -> None:
+    await bot.send_message(OWNER_CHAT_ID, build_weekly_report())
+
+
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     tz = ZoneInfo(TZ)
     scheduler = AsyncIOScheduler(timezone=tz)
@@ -46,6 +50,13 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         CronTrigger(day=1, hour=10, minute=0, timezone=tz),
         args=[bot],
         id="monthly_report",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        send_weekly_report,
+        CronTrigger(day_of_week="sun", hour=20, minute=0, timezone=tz),
+        args=[bot],
+        id="weekly_report",
         replace_existing=True,
     )
     return scheduler
